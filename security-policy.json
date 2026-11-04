@@ -1,0 +1,16 @@
+{
+  "forbidden_shared_networks": [
+    {
+      "services": ["proxy", "db"]
+    }
+  ],
+  "no_published_ports": ["api", "db"],
+  "no_privileged_containers": true,
+  "no_host_network": true,
+  "no_docker_socket": true,
+  "expected_networks": {
+    "proxy": ["app_network"],
+    "api": ["app_network", "db_network"],
+    "db": ["db_network"]
+  }
+}

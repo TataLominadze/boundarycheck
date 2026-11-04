@@ -1,0 +1,14 @@
+{
+  "services": {
+    "app": {
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "./config",
+          "target": "/etc/app/config",
+          "read_only": true
+        }
+      ]
+    }
+  }
+}

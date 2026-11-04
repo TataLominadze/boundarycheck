@@ -1,0 +1,218 @@
+name: BoundaryCheck CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Unit tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install project
+        run: python -m pip install --editable . --no-deps
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Compile Python sources
+        run: python -m compileall -q src tests
+
+  security-policy:
+    name: Validate security policy and Compose configurations
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DB_PASSWORD: boundarycheck-ci-placeholder
+      POSTGRES_PASSWORD: boundarycheck-ci-placeholder
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install project
+        run: python -m pip install --editable . --no-deps
+
+      - name: Validate policy JSON
+        run: python -m json.tool security-policy.json > /dev/null
+
+      - name: Check Docker Compose V2
+        shell: bash
+        run: |
+          command -v docker >/dev/null || {
+            echo "Docker CLI is not available on the GitHub runner."
+            exit 1
+          }
+
+          version="$(docker compose version --short)" || {
+            echo "Docker Compose V2 is not available on the GitHub runner."
+            exit 1
+          }
+          echo "Detected Docker Compose version: $version"
+          case "$version" in
+            2.*|v2.*) ;;
+            *)
+              echo "Expected Docker Compose V2; got $version."
+              exit 1
+              ;;
+          esac
+
+      - name: Validate secure Compose configuration
+        run: docker compose -f docker/compose/compose.yaml config --quiet
+
+      - name: Scan secure configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          report="$(
+            python -m boundarycheck scan \
+              --compose docker/compose/compose.yaml \
+              --policy security-policy.json \
+              --format json
+          )"
+          status=$?
+          set -e
+
+          printf '%s\n' "$report"
+          if [ "$status" -ne 0 ]; then
+            echo "Expected the secure configuration to return exit code 0; got $status."
+            exit 1
+          fi
+
+          printf '%s\n' "$report" | python -c '
+          import json
+          import sys
+
+          report = json.load(sys.stdin)
+          if (
+              report["status"] != "PASS"
+              or report["summary"]["violation_count"] != 0
+              or report["violations"] != []
+          ):
+              raise SystemExit("The secure configuration did not pass the policy.")
+          '
+
+      - name: Confirm insecure configuration is rejected
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          report="$(
+            python -m boundarycheck scan \
+              --compose docker/compose/compose.yaml \
+              --compose-override docker/compose/compose.insecure.yaml \
+              --policy security-policy.json \
+              --format json
+          )"
+          status=$?
+          set -e
+
+          printf '%s\n' "$report"
+          if [ "$status" -ne 1 ]; then
+            echo "Expected the insecure configuration to return exit code 1; got $status."
+            exit 1
+          fi
+
+          printf '%s\n' "$report" | python -c '
+          import json
+          import sys
+
+          report = json.load(sys.stdin)
+          rule_ids = {finding["rule_id"] for finding in report["violations"]}
+          expected = {"BC-NET-001", "BC-NET-002"}
+          if (
+              report["status"] != "FAIL"
+              or report["summary"]["violation_count"] != len(expected)
+              or rule_ids != expected
+          ):
+              raise SystemExit(
+                  "The insecure configuration did not report exactly the expected policy violations."
+              )
+          '
+
+      - name: Confirm container hardening examples are rejected
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for example in \
+            "tests/fixtures/compose/privileged-override.yaml:BC-CONT-001:HIGH" \
+            "tests/fixtures/compose/host-network-override.yaml:BC-CONT-002:HIGH" \
+            "tests/fixtures/compose/docker-socket-override.yaml:BC-CONT-003:CRITICAL"
+          do
+            override="${example%%:*}"
+            expectation="${example#*:}"
+            expected_rule_id="${expectation%%:*}"
+            expected_severity="${expectation#*:}"
+
+            set +e
+            report="$(
+              python -m boundarycheck scan \
+                --compose docker/compose/compose.yaml \
+                --compose-override "$override" \
+                --policy security-policy.json \
+                --format json
+            )"
+            status=$?
+            set -e
+
+            printf '%s\n' "$report"
+            if [ "$status" -ne 1 ]; then
+              echo "Expected $override to return exit code 1; got $status."
+              exit 1
+            fi
+
+            printf '%s\n' "$report" | \
+              EXPECTED_RULE_ID="$expected_rule_id" \
+              EXPECTED_SEVERITY="$expected_severity" \
+              python -c '
+          import json
+          import os
+          import sys
+
+          report = json.load(sys.stdin)
+          expected_rule_id = os.environ["EXPECTED_RULE_ID"]
+          expected_severity = os.environ["EXPECTED_SEVERITY"]
+          violations = report["violations"]
+          if (
+              report["status"] != "FAIL"
+              or report["summary"]["violation_count"] != 1
+              or len(violations) != 1
+              or violations[0]["rule_id"] != expected_rule_id
+              or violations[0]["severity"] != expected_severity
+          ):
+              raise SystemExit(
+                  f"Expected exactly {expected_rule_id} ({expected_severity})."
+              )
+          '
+          done

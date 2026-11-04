@@ -1,0 +1,29 @@
+{
+  "services": {
+    "proxy": {
+      "networks": {
+        "app_network": {},
+        "db_network": {}
+      },
+      "ports": [
+        {
+          "host_ip": "127.0.0.1",
+          "published": "8080",
+          "target": 80,
+          "protocol": "tcp"
+        }
+      ]
+    },
+    "api": {
+      "networks": {
+        "app_network": {},
+        "db_network": {}
+      }
+    },
+    "db": {
+      "networks": {
+        "db_network": {}
+      }
+    }
+  }
+}

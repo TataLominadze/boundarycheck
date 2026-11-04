@@ -1,0 +1,58 @@
+# Python bytecode and packaging output
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+build/
+dist/
+.Python
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Test, coverage, and development tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Local environment files; keep the public example in Git
+.env
+.env.*
+*.env
+*.env.*
+!.env.example
+!*.env.example
+.envrc
+
+# Local Docker credentials, overrides, and persistent development data
+/.docker/
+compose.override.yml
+compose.override.yaml
+docker-compose.override.yml
+docker-compose.override.yaml
+/docker/data/
+/docker/volumes/
+
+# Local editor settings and temporary files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.log
+
+# Operating system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
